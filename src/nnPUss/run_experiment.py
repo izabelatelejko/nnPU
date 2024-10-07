@@ -287,13 +287,14 @@ class Experiment:
                 preds.append(pred)
 
         test_loss /= len(new_data_loader)
+        pos_fraction = float(num_pos) / len(new_data_loader.dataset)
 
         kbar.add(
             1,
             values=[
                 ("new_data_loss", test_loss),
                 ("new_data_accuracy", 100.0 * correct / len(self.test_loader.dataset)),
-                ("pos_fraction", float(num_pos) / len(self.test_loader.dataset)),
+                ("pos_fraction", pos_fraction),
             ],
         )
 
@@ -302,6 +303,7 @@ class Experiment:
 
         metric_values = self._calculate_metrics(targets, preds)
         metric_values.loss = test_loss
+        metric_values.pos_fraction = pos_fraction
         print("\n")
         print(metric_values)
         self.new_data_metrics = metric_values
@@ -358,13 +360,14 @@ class Experiment:
                 preds.append(pred)
 
         test_loss /= len(new_data_loader)
+        pos_fraction = float(num_pos) / len(new_data_loader.dataset)
 
         kbar.add(
             1,
             values=[
                 ("new_data_loss", test_loss),
                 ("new_data_accuracy", 100.0 * correct / len(self.test_loader.dataset)),
-                ("pos_fraction", float(num_pos) / len(self.test_loader.dataset)),
+                ("pos_fraction", pos_fraction),
             ],
         )
 
@@ -387,12 +390,14 @@ class Experiment:
         metric_values.new_data_shifted_recall = metric_values.recall
         metric_values.new_data_shifted_f1 = metric_values.f1
         metric_values.new_data_shifted_auc = metric_values.auc
+        metric_values.new_data_shifted_pos_fraction = pos_fraction
 
         metric_values.new_data_accuracy = self.new_data_metrics.accuracy
         metric_values.new_data_precision = self.new_data_metrics.precision
         metric_values.new_data_recall = self.new_data_metrics.recall
         metric_values.new_data_f1 = self.new_data_metrics.f1
         metric_values.new_data_auc = self.new_data_metrics.auc
+        metric_values.new_data_pos_fraction = self.new_data_metrics.pos_fraction
 
         if isinstance(new_data, SyntheticPUDataset):
             metric_values.mean = new_data.MEAN
