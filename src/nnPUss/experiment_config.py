@@ -46,6 +46,10 @@ class ExperimentConfig:
         return os.path.join(self.output_dir, "metrics.json")
 
     @property
+    def new_data_metrics_file(self):
+        return os.path.join(self.output_dir, "new_data_metrics.json")
+
+    @property
     def train_metrics_per_epoch_file(self):
         return os.path.join(self.output_dir, "train_metrics_per_epoch.json")
 

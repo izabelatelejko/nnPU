@@ -737,9 +737,7 @@ class ImageEmbeddingDataset(DatasetSplitterMixin, PUDatasetBase):
             examples["data"] = embeddings
             return examples
 
-        dataset = dataset.map(
-            transforms, remove_columns=[image_col], batched=True
-        )
+        dataset = dataset.map(transforms, remove_columns=[image_col], batched=True)
         self.data = torch.tensor(dataset["data"])
         self.targets = torch.tensor(dataset[label_col])
         if self.targets.dtype == torch.bool:
@@ -997,3 +995,48 @@ class EuroSAT_PU(ImageEmbeddingDataset):
             random_seed=random_seed,
             manually_split_dataset=True,
         )
+
+
+class SyntheticPUDataset(PUDatasetBase):
+
+    N = None
+    PI = None
+    MEAN = None
+
+    def __init__(
+        self,
+        root,
+        pu_labeler: PULabeler = None,
+        target_transformer: BinaryTargetTransformer = BinaryTargetTransformer(
+            included_classes=[1, -1], positive_classes=[1]
+        ),
+        train=True,
+        download=True,  # ignored
+        random_seed=None,
+    ) -> None:
+
+        assert self.N is not None
+        assert self.PI is not None
+        assert self.MEAN is not None
+
+        self.root = root
+        self.train = train
+        self.download = download
+        self.random_seed = random_seed
+        self.target_transformer = target_transformer
+        self.pu_labeler = pu_labeler
+
+        self.data = torch.cat(
+            [
+                torch.normal(0, 1, (int(self.PI * self.N), 10)),
+                torch.normal(self.MEAN, 1, (int((1 - self.PI) * self.N), 10)),
+            ]
+        )
+        self.targets = torch.cat(
+            [
+                torch.ones(int(self.PI * self.N)),
+                -1 * torch.ones(int((1 - self.PI) * self.N)),
+            ]
+        )
+
+        self._convert_to_pu_data()
