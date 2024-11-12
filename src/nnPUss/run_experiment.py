@@ -101,8 +101,6 @@ class Experiment:
             )
 
         self.train_set = data["train"]
-        print(data["train"])
-        print(data["test"])
         self.prior = self.train_set.get_prior()
         self.train_loader = DataLoader(
             self.train_set,
@@ -250,12 +248,14 @@ class Experiment:
         test_points = []
         targets = []
         preds = []
+        outputs = []
 
         new_data_loader = DataLoader(
             new_data,
             batch_size=self.experiment_config.dataset_config.eval_batch_size,
             shuffle=False,
         )
+        # self.new_data_loader = new_data_loader
 
         kbar = pkbar.Kbar(
             target=len(new_data_loader) + 1,
@@ -264,12 +264,12 @@ class Experiment:
             width=8,
             always_stateful=False,
         )
-
         with torch.no_grad():
             test_loss_func = self.experiment_config.PULoss(prior=self.prior)
             for data, target, _ in new_data_loader:
                 data, target = data.to(self.device), target.to(self.device)
                 output = self.model(data)
+                outputs.append(output)
 
                 test_loss += test_loss_func(
                     output.view(-1), target.type(torch.float)
@@ -310,28 +310,35 @@ class Experiment:
         return metric_values
 
     def test_on_new_data_with_new_pi(
-        self, new_data, pi, est_new_pi, true_new_pi, km1_pi
+        self,
+        new_data,
+        pi,
+        km1_pi,
+        km2_pi,
+        true_new_pi,
     ):
         self.model.eval()
         test_loss = 0
-        correct = 0
-        num_pos = 0
         true_correct = 0
-        true_num_pos = 0
         km1_correct = 0
+        km2_correct = 0
+        true_num_pos = 0
         km1_num_pos = 0
+        km2_num_pos = 0
 
         test_points = []
         targets = []
-        preds = []
         true_preds = []
         km1_preds = []
+        km2_preds = []
+        outputs = []
 
         new_data_loader = DataLoader(
             new_data,
             batch_size=self.experiment_config.dataset_config.eval_batch_size,
             shuffle=False,
         )
+        # new_data_loader = self.new_data_loader
 
         kbar = pkbar.Kbar(
             target=len(new_data_loader) + 1,
@@ -340,28 +347,24 @@ class Experiment:
             width=8,
             always_stateful=False,
         )
+        print(f"prior: {self.prior}")
 
         with torch.no_grad():
             test_loss_func = self.experiment_config.PULoss(prior=self.prior)
             for data, target, _ in new_data_loader:
                 data, target = data.to(self.device), target.to(self.device)
                 output = self.model(data)
+                outputs.append(output)
                 sigmoid_output = torch.sigmoid(output)
 
                 test_loss += test_loss_func(
                     output.view(-1), target.type(torch.float)
                 ).item()  # sum up batch loss
 
-                tres = (pi / (1 - pi)) * ((1 - est_new_pi) / est_new_pi)
                 true_tres = (pi / (1 - pi)) * ((1 - true_new_pi) / true_new_pi)
                 km1_tres = (pi / (1 - pi)) * ((1 - km1_pi) / km1_pi)
-                print("tres: ", tres, " true_tres: ", true_tres)
+                km2_tres = (pi / (1 - pi)) * ((1 - km2_pi) / km2_pi)
 
-                pred = torch.where(
-                    sigmoid_output / (1 - sigmoid_output) < tres,
-                    torch.tensor(-1, device=self.device),
-                    torch.tensor(1, device=self.device),
-                )
                 true_pred = torch.where(
                     sigmoid_output / (1 - sigmoid_output) < true_tres,
                     torch.tensor(-1, device=self.device),
@@ -372,91 +375,106 @@ class Experiment:
                     torch.tensor(-1, device=self.device),
                     torch.tensor(1, device=self.device),
                 )
-                num_pos += torch.sum(pred == 1)
+                km2_pred = torch.where(
+                    sigmoid_output / (1 - sigmoid_output) < km2_tres,
+                    torch.tensor(-1, device=self.device),
+                    torch.tensor(1, device=self.device),
+                )
+
                 true_num_pos += torch.sum(true_pred == 1)
                 km1_num_pos += torch.sum(km1_pred == 1)
-                correct += pred.eq(target.view_as(pred)).sum().item()
+                km2_num_pos += torch.sum(km2_pred == 1)
+
                 true_correct += true_pred.eq(target.view_as(true_pred)).sum().item()
                 km1_correct += km1_pred.eq(target.view_as(km1_pred)).sum().item()
+                km2_correct += km2_pred.eq(target.view_as(km2_pred)).sum().item()
 
                 test_points.append(data)
                 targets.append(target)
-                preds.append(pred)
+
                 true_preds.append(true_pred)
                 km1_preds.append(km1_pred)
+                km2_preds.append(km2_pred)
 
         test_loss /= len(new_data_loader)
-        pos_fraction = float(num_pos) / len(new_data_loader.dataset)
         true_pos_fraction = float(true_num_pos) / len(new_data_loader.dataset)
         km1_pos_fraction = float(km1_num_pos) / len(new_data_loader.dataset)
+        km2_pos_fraction = float(km2_num_pos) / len(new_data_loader.dataset)
 
         kbar.add(
             1,
             values=[
                 ("new_data_loss", test_loss),
-                ("new_data_accuracy", 100.0 * correct / len(self.test_loader.dataset)),
-                ("pos_fraction", pos_fraction),
-                (
-                    "true_new_data_accuracy",
-                    100.0 * true_correct / len(self.test_loader.dataset),
-                ),
+                ("true_accuracy", 100.0 * true_correct / len(self.test_loader.dataset)),
                 ("true_pos_fraction", true_pos_fraction),
-                (
-                    "km1_new_data_accuracy",
-                    100.0 * km1_correct / len(self.test_loader.dataset),
-                ),
+                ("km1_accuracy", 100.0 * km1_correct / len(self.test_loader.dataset)),
                 ("km1_pos_fraction", km1_pos_fraction),
+                ("km2_accuracy", 100.0 * km2_correct / len(self.test_loader.dataset)),
+                ("km2_pos_fraction", km2_pos_fraction),
             ],
         )
 
         targets = torch.cat(targets).detach().cpu().numpy()
-        preds = torch.cat(preds).detach().cpu().numpy()
         true_preds = torch.cat(true_preds).detach().cpu().numpy()
         km1_preds = torch.cat(km1_preds).detach().cpu().numpy()
+        km2_preds = torch.cat(km2_preds).detach().cpu().numpy()
+        outputs = torch.cat(outputs).detach().cpu().numpy()
 
-        metric_values = self._calculate_metrics(targets, preds)
         true_metric_values = self._calculate_metrics(targets, true_preds)
         km1_metric_values = self._calculate_metrics(targets, km1_preds)
-        metric_values.loss = test_loss
-        print("\n")
-        print(metric_values)
-        self.new_data_metrics_with_new_pi = metric_values
+        km2_metric_values = self._calculate_metrics(targets, km2_preds)
+
+        # self.new_data_metrics_with_new_pi = metric_values
+
+        metric_values = MetricValues(
+            model=self.experiment_config.PULoss.name,
+            dataset=self.experiment_config.dataset_config.name,
+            label_frequency=self.experiment_config.label_frequency,
+            exp_number=self.experiment_config.exp_number,
+            loss=test_loss,
+            accuracy=None,
+            precision=None,
+            recall=None,
+            f1=None,
+            auc=None,
+        )
 
         metric_values.n = new_data.N
         metric_values.pi = pi
         metric_values.new_pi = new_data.PI
 
-        metric_values.est_new_pi = est_new_pi
-        metric_values.treshold = tres
-        metric_values.new_data_shifted_acc = metric_values.accuracy
-        metric_values.new_data_shifted_precision = metric_values.precision
-        metric_values.new_data_shifted_recall = metric_values.recall
-        metric_values.new_data_shifted_f1 = metric_values.f1
-        metric_values.new_data_shifted_auc = metric_values.auc
-        metric_values.new_data_shifted_pos_fraction = pos_fraction
+        metric_values.not_adjusted_accuracy = self.new_data_metrics.accuracy
+        metric_values.not_adjusted_precision = self.new_data_metrics.precision
+        metric_values.not_adjusted_recall = self.new_data_metrics.recall
+        metric_values.not_adjusted_f1 = self.new_data_metrics.f1
+        metric_values.not_adjusted_auc = self.new_data_metrics.auc
+        metric_values.not_adjusted_pos_fraction = self.new_data_metrics.pos_fraction
 
-        metric_values.new_data_accuracy = self.new_data_metrics.accuracy
-        metric_values.new_data_precision = self.new_data_metrics.precision
-        metric_values.new_data_recall = self.new_data_metrics.recall
-        metric_values.new_data_f1 = self.new_data_metrics.f1
-        metric_values.new_data_auc = self.new_data_metrics.auc
-        metric_values.new_data_pos_fraction = self.new_data_metrics.pos_fraction
+        metric_values.true_pi_tres = true_tres
+        metric_values.true_pi_accuracy = true_metric_values.accuracy
+        metric_values.true_pi_precision = true_metric_values.precision
+        metric_values.true_pi_recall = true_metric_values.recall
+        metric_values.true_pi_f1 = true_metric_values.f1
+        metric_values.true_pi_auc = true_metric_values.auc
+        metric_values.true_pi_pos_fraction = true_pos_fraction
 
-        metric_values.true_pi_treshold = true_tres
-        metric_values.true_pi_new_data_shifted_acc = true_metric_values.accuracy
-        metric_values.true_pi_new_data_shifted_precision = true_metric_values.precision
-        metric_values.true_pi_new_data_shifted_recall = true_metric_values.recall
-        metric_values.true_pi_new_data_shifted_f1 = true_metric_values.f1
-        metric_values.true_pi_new_data_shifted_auc = true_metric_values.auc
-        metric_values.true_pi_new_data_shifted_pos_fraction = true_pos_fraction
-
+        metric_values.km1_pi = km1_pi
         metric_values.km1_tres = km1_tres
-        metric_values.km1_new_data_accuracy = km1_metric_values.accuracy
-        metric_values.km1_new_data_precision = km1_metric_values.precision
-        metric_values.km1_new_data_recall = km1_metric_values.recall
-        metric_values.km1_new_data_f1 = km1_metric_values.f1
-        metric_values.km1_new_data_auc = km1_metric_values.auc
-        metric_values.km1_new_data_pos_fraction = km1_pos_fraction
+        metric_values.km1_accuracy = km1_metric_values.accuracy
+        metric_values.km1_precision = km1_metric_values.precision
+        metric_values.km1_recall = km1_metric_values.recall
+        metric_values.km1_f1 = km1_metric_values.f1
+        metric_values.km1_auc = km1_metric_values.auc
+        metric_values.km1_pos_fraction = km1_pos_fraction
+
+        metric_values.km2_pi = km2_pi
+        metric_values.km2_tres = km2_tres
+        metric_values.km2_accuracy = km2_metric_values.accuracy
+        metric_values.km2_precision = km2_metric_values.precision
+        metric_values.km2_recall = km2_metric_values.recall
+        metric_values.km2_f1 = km2_metric_values.f1
+        metric_values.km2_auc = km2_metric_values.auc
+        metric_values.km2_pos_fraction = km2_pos_fraction
 
         if isinstance(new_data, SyntheticPUDataset):
             metric_values.mean = new_data.MEAN
@@ -464,5 +482,8 @@ class Experiment:
 
         with open(self.experiment_config.new_data_metrics_file, "w") as f:
             json.dump(metric_values, f, cls=DictJsonEncoder)
+
+        print("\n")
+        print(metric_values)
 
         return metric_values

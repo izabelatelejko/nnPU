@@ -109,13 +109,16 @@ class SCAR_CC_Labeler(PULabeler):
         P_samples_num = int(np.ceil(A * c * (self._prior * n)))
         U_samples_num = int(np.ceil(A * (1 - c) * n))
 
-        positive_idx = torch.where(y == 1)[0]
-        selected_positive_idx = torch.multinomial(
-            torch.ones_like(positive_idx, dtype=torch.float32),
-            P_samples_num,
-            replacement=True,
-        )
-        positive_labeled_idx = positive_idx[selected_positive_idx]
+        if c != 0:
+            positive_idx = torch.where(y == 1)[0]
+            selected_positive_idx = torch.multinomial(
+                torch.ones_like(positive_idx, dtype=torch.float32),
+                P_samples_num,
+                replacement=True,
+            )
+            positive_labeled_idx = positive_idx[selected_positive_idx]
+        else:
+            positive_labeled_idx = torch.tensor([], dtype=torch.int64)
 
         unlabeled_idx = torch.multinomial(
             torch.ones_like(y, dtype=torch.float32), U_samples_num, replacement=True
