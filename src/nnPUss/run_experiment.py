@@ -15,6 +15,9 @@ from torch.utils.data import DataLoader
 
 from dataset import SyntheticPUDataset
 
+from algorithm import priorestimator as ratio_estimator
+from algorithm import PUsequence, to_ndarray
+
 
 class DictJsonEncoder(json.JSONEncoder):
     def default(self, o):
@@ -322,15 +325,18 @@ class Experiment:
         true_correct = 0
         km1_correct = 0
         km2_correct = 0
+        ratio_correct = 0
         true_num_pos = 0
         km1_num_pos = 0
         km2_num_pos = 0
+        ratio_num_pos = 0
 
         test_points = []
         targets = []
         true_preds = []
         km1_preds = []
         km2_preds = []
+        ratio_preds = []
         outputs = []
 
         new_data_loader = DataLoader(
@@ -338,7 +344,7 @@ class Experiment:
             batch_size=self.experiment_config.dataset_config.eval_batch_size,
             shuffle=False,
         )
-        # new_data_loader = self.new_data_loader
+        ratio_pi = self.estimate_ratio_prior(new_data_loader)
 
         kbar = pkbar.Kbar(
             target=len(new_data_loader) + 1,
@@ -364,6 +370,7 @@ class Experiment:
                 true_tres = (pi / (1 - pi)) * ((1 - true_new_pi) / true_new_pi)
                 km1_tres = (pi / (1 - pi)) * ((1 - km1_pi) / km1_pi)
                 km2_tres = (pi / (1 - pi)) * ((1 - km2_pi) / km2_pi)
+                ratio_tres = (pi / (1 - pi)) * ((1 - ratio_pi) / ratio_pi)
 
                 true_pred = torch.where(
                     sigmoid_output / (1 - sigmoid_output) < true_tres,
@@ -380,14 +387,21 @@ class Experiment:
                     torch.tensor(-1, device=self.device),
                     torch.tensor(1, device=self.device),
                 )
+                ratio_pred = torch.where(
+                    sigmoid_output / (1 - sigmoid_output) < ratio_tres,
+                    torch.tensor(-1, device=self.device),
+                    torch.tensor(1, device=self.device),
+                )
 
                 true_num_pos += torch.sum(true_pred == 1)
                 km1_num_pos += torch.sum(km1_pred == 1)
                 km2_num_pos += torch.sum(km2_pred == 1)
+                ratio_num_pos += torch.sum(ratio_pred == 1)
 
                 true_correct += true_pred.eq(target.view_as(true_pred)).sum().item()
                 km1_correct += km1_pred.eq(target.view_as(km1_pred)).sum().item()
                 km2_correct += km2_pred.eq(target.view_as(km2_pred)).sum().item()
+                ratio_correct += ratio_pred.eq(target.view_as(ratio_pred)).sum().item()
 
                 test_points.append(data)
                 targets.append(target)
@@ -395,11 +409,13 @@ class Experiment:
                 true_preds.append(true_pred)
                 km1_preds.append(km1_pred)
                 km2_preds.append(km2_pred)
+                ratio_preds.append(ratio_pred)
 
         test_loss /= len(new_data_loader)
         true_pos_fraction = float(true_num_pos) / len(new_data_loader.dataset)
         km1_pos_fraction = float(km1_num_pos) / len(new_data_loader.dataset)
         km2_pos_fraction = float(km2_num_pos) / len(new_data_loader.dataset)
+        ratio_pos_fraction = float(ratio_num_pos) / len(new_data_loader.dataset)
 
         kbar.add(
             1,
@@ -411,6 +427,11 @@ class Experiment:
                 ("km1_pos_fraction", km1_pos_fraction),
                 ("km2_accuracy", 100.0 * km2_correct / len(self.test_loader.dataset)),
                 ("km2_pos_fraction", km2_pos_fraction),
+                (
+                    "ratio_accuracy",
+                    100.0 * ratio_correct / len(self.test_loader.dataset),
+                ),
+                ("ratio_pos_fraction", ratio_pos_fraction),
             ],
         )
 
@@ -418,11 +439,13 @@ class Experiment:
         true_preds = torch.cat(true_preds).detach().cpu().numpy()
         km1_preds = torch.cat(km1_preds).detach().cpu().numpy()
         km2_preds = torch.cat(km2_preds).detach().cpu().numpy()
+        ratio_preds = torch.cat(ratio_preds).detach().cpu().numpy()
         outputs = torch.cat(outputs).detach().cpu().numpy()
 
         true_metric_values = self._calculate_metrics(targets, true_preds)
         km1_metric_values = self._calculate_metrics(targets, km1_preds)
         km2_metric_values = self._calculate_metrics(targets, km2_preds)
+        ratio_metric_values = self._calculate_metrics(targets, ratio_preds)
 
         # self.new_data_metrics_with_new_pi = metric_values
 
@@ -476,6 +499,15 @@ class Experiment:
         metric_values.km2_auc = km2_metric_values.auc
         metric_values.km2_pos_fraction = km2_pos_fraction
 
+        metric_values.ratio_pi = ratio_pi
+        metric_values.ratio_tres = ratio_tres
+        metric_values.ratio_accuracy = ratio_metric_values.accuracy
+        metric_values.ratio_precision = ratio_metric_values.precision
+        metric_values.ratio_recall = ratio_metric_values.recall
+        metric_values.ratio_f1 = ratio_metric_values.f1
+        metric_values.ratio_auc = ratio_metric_values.auc
+        metric_values.ratio_pos_fraction = ratio_pos_fraction
+
         if isinstance(new_data, SyntheticPUDataset):
             metric_values.mean = new_data.MEAN
             metric_values.type = "synthetic"
@@ -487,3 +519,31 @@ class Experiment:
         print(metric_values)
 
         return metric_values
+
+    def estimate_ratio_prior(self, new_data_loader):
+        self.model.eval()
+        with torch.no_grad():
+            preds_P, preds_U = [], []
+
+            # positive from training set
+            for data, target, _ in self.train_loader:
+                data, target = data.to(self.device), target.to(self.device)
+                preds = self.model(data)  # .view(-1)
+                preds = preds[target == 1]
+                preds_P.append(to_ndarray(preds))  # to_ndarray(y))
+
+            # unlabeled from new data
+            for data, target, _ in new_data_loader:
+                data, target = data.to(self.device), target.to(self.device)
+                preds = self.model(data)  # .view(-1)
+                preds_U.append(to_ndarray(preds))  # to_ndarray(y))
+
+            preds_P = np.concatenate(preds_P)
+            preds_U = np.concatenate(preds_U)
+
+            prior = ratio_estimator(
+                np.concatenate([preds_P, preds_U]),
+                PUsequence(len(preds_P), len(preds_U)),
+            )
+
+        return prior
