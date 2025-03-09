@@ -5,7 +5,7 @@ import pytest
 import torch
 
 sys.path.append(".")
-from src.nnPUss.dataset import (
+from nnPU.dataset import (
     IMDB_PU,
     MNIST_PU,
     PUDatasetBase,
