@@ -2,8 +2,8 @@ import os
 from typing import Any, Type
 
 from attr import dataclass
-from dataset_configs import DatasetConfig
-from loss import _PULoss
+from nnPU.dataset_configs import DatasetConfig
+from nnPU.loss import _PULoss
 
 
 @dataclass

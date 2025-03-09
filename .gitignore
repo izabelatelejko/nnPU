@@ -16,3 +16,4 @@ old-outputs*/
 *.png
 *.rar
 *.zip
+build/
