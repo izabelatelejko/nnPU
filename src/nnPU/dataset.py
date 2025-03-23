@@ -1,6 +1,6 @@
 # %%
 import os
-from typing import Literal
+from typing import Literal, Optional
 
 import numpy as np
 import pandas as pd
@@ -183,6 +183,86 @@ class PUDatasetBase:
             self.data, self.binary_targets
         )
         return self.data, self.binary_targets, self.pu_targets
+
+    def shift_pu_data(self, shifted_prior: float, n_samples: Optional[int] = None):
+        """Shifts the PU data to a new prior.
+
+        If n_samples is specified, the number of samples in the shifted data will be n_samples.
+        Otherwise, the number of samples will be the maximum number of samples that can be generated
+        to achieve the shifted prior.
+        """
+        assert self.data is not None
+        assert self.targets is not None
+        assert self.binary_targets is not None
+
+        n = len(self.data)
+        n_pos = torch.sum(self.binary_targets == 1).item()
+        n_neg = n - n_pos
+        prior = n_pos / n
+
+        if n_samples is None:
+            n_samples = n
+
+        c = self.pu_labeler._label_frequency
+        A = 1 / (1 - c + c * shifted_prior)
+
+        P_samples = int(np.ceil(A * c * (shifted_prior * n_samples)))
+        U_samples = int(np.ceil(A * (1 - c) * n_samples))
+
+        if shifted_prior < prior:
+            U_max = int(n_neg / (1 - shifted_prior))
+            assert U_samples <= U_max, f"U_samples must be less than {U_max}"
+            n_neg_new = int(n_neg * U_samples / U_max)
+            n_pos_new = int(n_samples - n_neg_new)
+        else:
+            U_max = int(n_pos / shifted_prior)
+            assert U_samples <= U_max, f"U_samples must be less than {U_max}"
+            n_pos_new = int(n_pos * U_samples / U_max) + P_samples
+            n_neg_new = int(n_samples - n_pos_new)
+
+        assert n_pos_new <= n_pos, f"n_pos_new must be less than {n_pos}"
+
+        print(f"{n_pos_new=}, {n_neg_new=}, {n_samples=}, {U_max=}")
+        print(f"{P_samples=}, {U_samples=}, {n_samples=}, {c=}")
+
+        pos_idx = torch.where(self.binary_targets == 1)[0]
+        neg_idx = torch.where(self.binary_targets == -1)[0]
+
+        selected_pos_idx = torch.multinomial(
+            torch.ones_like(pos_idx, dtype=torch.float32),
+            n_pos_new,
+            replacement=False,
+        )
+        selected_neg_idx = torch.multinomial(
+            torch.ones_like(neg_idx, dtype=torch.float32),
+            n_neg_new,
+            replacement=False,
+        )
+
+        self.data = torch.cat(
+            [
+                self.data[pos_idx[selected_pos_idx]],
+                self.data[neg_idx[selected_neg_idx]],
+            ]
+        )
+        self.targets = torch.cat(
+            [
+                self.targets[pos_idx[selected_pos_idx]],
+                self.targets[neg_idx[selected_neg_idx]],
+            ]
+        )
+        self.binary_targets = torch.cat(
+            [
+                self.binary_targets[pos_idx[selected_pos_idx]],
+                self.binary_targets[neg_idx[selected_neg_idx]],
+            ]
+        )
+        self.pu_targets = torch.cat(
+            [
+                torch.ones(P_samples),
+                self.pu_labeler._NEGATIVE_LABEL * torch.ones(n_samples - P_samples),
+            ]
+        )
 
     def get_prior(self):
         assert self.train is not None
@@ -697,6 +777,9 @@ class ImageEmbeddingDataset(DatasetSplitterMixin, PUDatasetBase):
         image_preprocessing_fun=None,
         manually_split_dataset=False,
     ):
+        print(f"Loading dataset {dataset_name} from {dataset_hub_path}")
+        print(f"dataset_hub_subset: {dataset_hub_subset}")
+        print(f"caching in {os.path.join(root, dataset_name)}")
         dataset = load_dataset(
             dataset_hub_path,
             dataset_hub_subset,
@@ -740,6 +823,8 @@ class ImageEmbeddingDataset(DatasetSplitterMixin, PUDatasetBase):
             examples["data"] = embeddings
             return examples
 
+        # limit dataset size for faster training to 500
+        dataset = dataset.select(range(500))
         dataset = dataset.map(transforms, remove_columns=[image_col], batched=True)
         self.data = torch.tensor(dataset["data"])
         self.targets = torch.tensor(dataset[label_col])
@@ -998,48 +1083,3 @@ class EuroSAT_PU(ImageEmbeddingDataset):
             random_seed=random_seed,
             manually_split_dataset=True,
         )
-
-
-class SyntheticPUDataset(PUDatasetBase):
-
-    N = None
-    PI = None
-    MEAN = None
-
-    def __init__(
-        self,
-        root,
-        pu_labeler: PULabeler = None,
-        target_transformer: BinaryTargetTransformer = BinaryTargetTransformer(
-            included_classes=[1, -1], positive_classes=[1]
-        ),
-        train=True,
-        download=True,  # ignored
-        random_seed=None,
-    ) -> None:
-
-        assert self.N is not None
-        assert self.PI is not None
-        assert self.MEAN is not None
-
-        self.root = root
-        self.train = train
-        self.download = download
-        self.random_seed = random_seed
-        self.target_transformer = target_transformer
-        self.pu_labeler = pu_labeler
-
-        self.data = torch.cat(
-            [
-                torch.normal(0, 1, (int(self.PI * self.N), 10)),
-                torch.normal(self.MEAN, 1, (int((1 - self.PI) * self.N), 10)),
-            ]
-        )
-        self.targets = torch.cat(
-            [
-                torch.ones(int(self.PI * self.N)),
-                -1 * torch.ones(int((1 - self.PI) * self.N)),
-            ]
-        )
-
-        self._convert_to_pu_data()
