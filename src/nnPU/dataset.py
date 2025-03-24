@@ -176,24 +176,34 @@ class PUDatasetBase:
         assert self.data is not None
         assert self.targets is not None
 
+        print(len(self.data), len(self.targets))
         self.data, self.binary_targets = self.target_transformer.transform(
             self.data, self.targets
         )
+        print(len(self.data), len(self.targets), len(self.binary_targets))
         self.data, self.binary_targets, self.pu_targets = self.pu_labeler.relabel(
             self.data, self.binary_targets
         )
+        print(len(self.data), len(self.targets), len(self.binary_targets))
         return self.data, self.binary_targets, self.pu_targets
 
-    def shift_pu_data(self, shifted_prior: float, n_samples: Optional[int] = None):
-        """Shifts the PU data to a new prior.
+    def _convert_to_shifted_pu_data(
+        self, shifted_prior: Optional[float], n_samples: Optional[int] = None
+    ):
+        """Converts data to PU data with given prior.
 
         If n_samples is specified, the number of samples in the shifted data will be n_samples.
         Otherwise, the number of samples will be the maximum number of samples that can be generated
         to achieve the shifted prior.
         """
+        assert self.target_transformer is not None
+        assert self.pu_labeler is not None
         assert self.data is not None
         assert self.targets is not None
-        assert self.binary_targets is not None
+
+        self.data, self.binary_targets = self.target_transformer.transform(
+            self.data, self.targets
+        )
 
         n = len(self.data)
         n_pos = torch.sum(self.binary_targets == 1).item()
@@ -202,6 +212,9 @@ class PUDatasetBase:
 
         if n_samples is None:
             n_samples = n
+
+        if shifted_prior is None:
+            shifted_prior = prior
 
         c = self.pu_labeler._label_frequency
         A = 1 / (1 - c + c * shifted_prior)
@@ -222,6 +235,8 @@ class PUDatasetBase:
 
         assert n_pos_new <= n_pos, f"n_pos_new must be less than {n_pos}"
 
+        self.pu_labeler._prior = torch.tensor((n_pos_new - P_samples) / U_samples)
+        print(f"{n_pos=}, {n_neg=}, {prior=}")
         print(f"{n_pos_new=}, {n_neg_new=}, {n_samples=}, {U_max=}")
         print(f"{P_samples=}, {U_samples=}, {n_samples=}, {c=}")
 
@@ -801,30 +816,30 @@ class ImageEmbeddingDataset(DatasetSplitterMixin, PUDatasetBase):
             idx = self.get_split_idx(dataset, split_name, random_seed=random_seed)
             dataset = dataset.select(idx)
 
-        def transforms(examples):
-            image_processor = AutoImageProcessor.from_pretrained(
-                "MBZUAI/swiftformer-xs"
-            )
-            model = SwiftFormerModel.from_pretrained("MBZUAI/swiftformer-xs").cuda()
+        self.image_processor = AutoImageProcessor.from_pretrained(
+            "MBZUAI/swiftformer-xs"
+        )
+        self.image_processing_model = SwiftFormerModel.from_pretrained(
+            "MBZUAI/swiftformer-xs"
+        ).cpu()
 
+        def transforms(examples):
             embeddings = []
             for img in examples[image_col]:
                 if image_preprocessing_fun:
                     img = image_preprocessing_fun(img)
 
-                inputs = image_processor(img, return_tensors="pt")
-                inputs["pixel_values"] = inputs["pixel_values"].cuda()
+                inputs = self.image_processor(img, return_tensors="pt")
+                inputs["pixel_values"] = inputs["pixel_values"].cpu()
 
                 with torch.no_grad():
-                    outputs = model(**inputs)
+                    outputs = self.image_processing_model(**inputs)
 
                 last_hidden_states = outputs.last_hidden_state
                 embeddings.append(last_hidden_states.reshape(-1).cpu())
             examples["data"] = embeddings
             return examples
 
-        # limit dataset size for faster training to 500
-        dataset = dataset.select(range(500))
         dataset = dataset.map(transforms, remove_columns=[image_col], batched=True)
         self.data = torch.tensor(dataset["data"])
         self.targets = torch.tensor(dataset[label_col])
