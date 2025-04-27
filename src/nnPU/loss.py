@@ -157,3 +157,57 @@ class uPUssLoss(_PULoss):
         beta=0,
     ):
         super().__init__(prior, loss, gamma, beta, nnPU=False, single_sample=True)
+
+
+class DRPUccLoss(_PULoss):
+    name = "DRPUcc"
+
+    def __init__(
+        self,
+        prior,
+        alpha,
+        loss=(lambda x: torch.square(x - 1) / 2, lambda x: x - 1),
+        gamma=1,
+        beta=0,
+    ):
+        super().__init__(prior, loss, gamma, beta, nnPU=False, single_sample=False)
+        self.alpha = alpha
+        # Set the alpha to true train prior if it is known
+        if self.prior is not None:
+            self.alpha = self.prior
+        self.f = loss[0]
+        self.df = loss[1]
+        self.f_dual = lambda x: x * self.df(x) - self.f(x)
+        self.f_nn = lambda x: self.f_dual(x) - self.f_dual(0 * x)
+
+    def forward(self, x, target, test=False):
+        assert x.shape == target.shape
+        positive, unlabeled = target == self.positive, target == self.unlabeled
+        positive, unlabeled = positive.type(torch.bool), unlabeled.type(torch.bool)
+
+        y_positive = x[positive]
+        y_unlabeled = x[unlabeled]
+
+        print(
+            f"positive: {y_positive.shape}, unlabeled: {y_unlabeled.shape}, alpha: {self.alpha}"
+        )
+
+        E_pp = torch.mean(-self.df(y_positive) + self.alpha * self.f_nn(y_positive))
+        E_pn = torch.mean(self.f_nn(y_positive))
+        E_u = torch.mean(self.f_nn(y_unlabeled))
+        E_n = E_u - self.alpha * E_pn
+        # check if E_n is nan
+        if torch.isnan(E_n):
+            E_n = 0
+        if torch.isnan(E_pp):
+            E_pp = 0
+        if torch.isnan(E_u):
+            E_u = 0
+
+        if E_n >= self.beta:
+            loss = E_pp + max(0, E_n) + self.f_dual(0 * E_u)
+        else:
+            loss = -self.gamma * E_n
+
+        print(f"E_pp: {E_pp}, E_pn: {E_pn}, E_u: {E_u}, E_n: {E_n}, loss: {loss}")
+        return loss

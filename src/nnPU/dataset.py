@@ -792,9 +792,6 @@ class ImageEmbeddingDataset(DatasetSplitterMixin, PUDatasetBase):
         image_preprocessing_fun=None,
         manually_split_dataset=False,
     ):
-        print(f"Loading dataset {dataset_name} from {dataset_hub_path}")
-        print(f"dataset_hub_subset: {dataset_hub_subset}")
-        print(f"caching in {os.path.join(root, dataset_name)}")
         dataset = load_dataset(
             dataset_hub_path,
             dataset_hub_subset,

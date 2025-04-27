@@ -35,6 +35,7 @@ class Experiment:
             self.model.parameters(),
             lr=self.experiment_config.dataset_config.learning_rate,
             weight_decay=0.005,
+            betas=(0.9, 0.999),
         )
 
         self.train_metrics = []

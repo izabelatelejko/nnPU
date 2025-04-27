@@ -18,7 +18,6 @@ for directory, subdirs, files in os.walk(RESULTS_DIR):
 
             metric_values["label_frequency"] = f'{metric_values["label_frequency"]:.1f}'
             results.append(metric_values)
-        # print(metrics_file_path)
 
 results_df = pd.DataFrame.from_records(results)
 display(results_df)
