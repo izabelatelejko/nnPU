@@ -195,17 +195,17 @@ class DRPUccLoss(_PULoss):
         E_pp = torch.mean(-self.df(y_positive) + self.alpha * self.f_nn(y_positive))
         E_pn = torch.mean(self.f_nn(y_positive))
         E_u = torch.mean(self.f_nn(y_unlabeled))
-        E_n = E_u - self.alpha * E_pn
-        # check if E_n is nan
-        if torch.isnan(E_n):
-            E_n = 0
+        
         if torch.isnan(E_pp):
             E_pp = 0
+        if torch.isnan(E_pn):
+            E_pn = 0
         if torch.isnan(E_u):
             E_u = 0
-
+        
+        E_n = E_u - self.alpha * E_pn
         if E_n >= self.beta:
-            loss = E_pp + max(0, E_n) + self.f_dual(0 * E_u)
+            loss = E_pp + max(0, E_n) + self.f_dual(torch.tensor(0.))
         else:
             loss = -self.gamma * E_n
 
