@@ -236,9 +236,16 @@ class PUDatasetBase:
         assert n_pos_new <= n_pos, f"n_pos_new must be less than {n_pos}"
 
         self.pu_labeler._prior = torch.tensor((n_pos_new - P_samples) / U_samples)
-        print(f"{n_pos=}, {n_neg=}, {prior=}")
-        print(f"{n_pos_new=}, {n_neg_new=}, {n_samples=}, {U_max=}")
-        print(f"{P_samples=}, {U_samples=}, {n_samples=}, {c=}")
+        # print(f"{n_pos=}, {n_neg=}, {prior=}")
+        # print(f"{n_pos_new=}, {n_neg_new=}, {n_samples=}, {U_max=}")
+        # print(f"{P_samples=}, {U_samples=}, {n_samples=}, {c=}")
+        self.dataset_stats = {
+            "n_pos": n_pos_new,
+            "n_neg": n_neg_new,
+            "n_p": P_samples,
+            "n_u": U_samples,
+            "n_samples": n_samples,
+        }
 
         pos_idx = torch.where(self.binary_targets == 1)[0]
         neg_idx = torch.where(self.binary_targets == -1)[0]

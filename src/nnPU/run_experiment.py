@@ -95,7 +95,7 @@ class Experiment:
                     random_seed=self.experiment_config.seed,
                 )
             )
-
+        
         self.train_set = data["train"]
         self.prior = self.train_set.get_prior()
         self.train_loader = DataLoader(

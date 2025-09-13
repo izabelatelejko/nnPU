@@ -11,7 +11,7 @@ class PUModel(nn.Module):
     Basic Multi-layer perceptron as described in "Positive-Unlabeled Learning with Non-Negative Risk Estimator"
     """
 
-    def __init__(self, n_inputs):
+    def __init__(self, n_inputs, activate_output=False):
         super(PUModel, self).__init__()
         self.fc1 = nn.Linear(n_inputs, 300, bias=False)
         self.bn1 = nn.BatchNorm1d(300)
@@ -22,6 +22,8 @@ class PUModel(nn.Module):
         self.fc4 = nn.Linear(300, 300, bias=False)
         self.bn4 = nn.BatchNorm1d(300)
         self.fc5 = nn.Linear(300, 1)
+        self.af = nn.ReLU()
+        self.activate_output = activate_output
 
     def forward(self, x):
         x = x.view(x.size()[0], -1)
@@ -38,4 +40,6 @@ class PUModel(nn.Module):
         x = self.bn4(x)
         x = F.relu(x)
         x = self.fc5(x)
+        if self.activate_output:
+            x = self.af(x)
         return x
